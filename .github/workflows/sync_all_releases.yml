@@ -1,0 +1,60 @@
+name: Sync All Releases from tom-snow/wechat-windows-versions
+
+on:
+  workflow_dispatch:  # 可手动运行
+  schedule:
+    - cron: '0 3 * * *'  # 每天凌晨自动运行（UTC 03:00）
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install gh jq wget -y
+
+    - name: Fetch all releases from upstream
+      run: |
+        gh api repos/tom-snow/wechat-windows-versions/releases > all_releases.json
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+
+    - name: Process and sync each release
+      run: |
+        mkdir -p assets
+
+        releases=$(jq -c '.[]' all_releases.json)
+
+        echo "$releases" | while read -r release; do
+          tag_name=$(echo "$release" | jq -r .tag_name)
+
+          echo "🔎 Checking tag: $tag_name"
+
+          if gh release view "$tag_name" -R SiverKing/wechat3.9-windows-versions >/dev/null 2>&1; then
+            echo "✅ Release $tag_name already exists. Skipping."
+            continue
+          fi
+
+          echo "🚀 Syncing release: $tag_name"
+
+          echo "$release" | jq -r .body > release_body.txt
+
+          rm -rf assets/*
+          mkdir -p assets
+
+          for url in $(echo "$release" | jq -r '.assets[].browser_download_url'); do
+            wget -q -P assets "$url"
+          done
+
+          gh release create "$tag_name" assets/* \
+            --repo SiverKing/wechat3.9-windows-versions \
+            --title "$tag_name" \
+            --notes-file release_body.txt || echo "⚠️ Failed to create $tag_name"
+
+          echo "✅ Release $tag_name synced."
+
+        done
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
